@@ -14,7 +14,7 @@
   See the License for the specific language governing permissions and
   limitations under the License.
 */
-pragma solidity 0.5.7;
+pragma solidity ^0.5.11;
 
 import "../lib/AddressUtil.sol";
 import "../lib/ERC20SafeTransfer.sol";
@@ -37,30 +37,24 @@ contract TransferContract {
     function safeTransferWithGasLimit(
         address token,
         address to,
-        uint256 value,
+        uint    value,
         uint    gasLimit
         )
         external
     {
-        require(
-            token.safeTransferWithGasLimit(to, value, gasLimit),
-            "TRANSFER_FAILURE"
-        );
+        token.safeTransferWithGasLimitAndVerify(to, value, gasLimit);
     }
 
     function safeTransferFromWithGasLimit(
         address token,
         address from,
         address to,
-        uint256 value,
+        uint    value,
         uint    gasLimit
         )
         external
     {
-        require(
-            token.safeTransferFromWithGasLimit(from, to, value, gasLimit),
-            "TRANSFER_FAILURE"
-        );
+        token.safeTransferFromWithGasLimitAndVerify(from, to, value, gasLimit);
     }
 
     function sendETH(
@@ -70,7 +64,7 @@ contract TransferContract {
         )
         external
     {
-        require(to.sendETH(amount, gasLimit), "TRANSFER_FAILURE");
+        to.sendETHAndVerify(amount, gasLimit);
     }
 
     function setTestCase(

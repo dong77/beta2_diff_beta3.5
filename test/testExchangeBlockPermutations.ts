@@ -1,31 +1,28 @@
 import BN = require("bn.js");
-import * as constants from "./constants";
+import { Constants } from "loopringV3.js";
 import { ExchangeTestUtil } from "./testExchangeUtil";
 import { DepositInfo, RingInfo } from "./types";
 
 contract("Exchange", (accounts: string[]) => {
-
   let exchangeTestUtil: ExchangeTestUtil;
   let exchangeId = 0;
 
   const createRandomRing = () => {
     const ring: RingInfo = {
-      orderA:
-        {
-          tokenS: "WETH",
-          tokenB: "GTO",
-          amountS: exchangeTestUtil.getRandomAmount(),
-          amountB: exchangeTestUtil.getRandomAmount(),
-          buy: exchangeTestUtil.getRandomInt(2) > 0,
-        },
-      orderB:
-        {
-          tokenS: "GTO",
-          tokenB: "WETH",
-          amountS: exchangeTestUtil.getRandomAmount(),
-          amountB: exchangeTestUtil.getRandomAmount(),
-          buy: exchangeTestUtil.getRandomInt(2) > 0,
-        },
+      orderA: {
+        tokenS: "WETH",
+        tokenB: "GTO",
+        amountS: exchangeTestUtil.getRandomAmount(),
+        amountB: exchangeTestUtil.getRandomAmount(),
+        buy: exchangeTestUtil.getRandomInt(2) > 0
+      },
+      orderB: {
+        tokenS: "GTO",
+        tokenB: "WETH",
+        amountS: exchangeTestUtil.getRandomAmount(),
+        amountB: exchangeTestUtil.getRandomAmount(),
+        buy: exchangeTestUtil.getRandomInt(2) > 0
+      }
     };
     return ring;
   };
@@ -33,12 +30,24 @@ contract("Exchange", (accounts: string[]) => {
   const doRandomDeposit = async () => {
     const orderOwners = exchangeTestUtil.testContext.orderOwners;
     const keyPair = exchangeTestUtil.getKeyPairEDDSA();
-    const owner = orderOwners[Number(exchangeTestUtil.getRandomInt(orderOwners.length))];
-    const amount = new BN(web3.utils.toWei("" + exchangeTestUtil.getRandomInt(100000000) / 1000, "ether"));
+    const owner =
+      orderOwners[Number(exchangeTestUtil.getRandomInt(orderOwners.length))];
+    const amount = new BN(
+      web3.utils.toWei(
+        "" + exchangeTestUtil.getRandomInt(100000000) / 1000,
+        "ether"
+      )
+    );
     const token = exchangeTestUtil.getTokenAddress("LRC");
-    return await exchangeTestUtil.deposit(exchangeId, owner,
-                                          keyPair.secretKey, keyPair.publicKeyX, keyPair.publicKeyY,
-                                          token, amount);
+    return await exchangeTestUtil.deposit(
+      exchangeId,
+      owner,
+      keyPair.secretKey,
+      keyPair.publicKeyX,
+      keyPair.publicKeyY,
+      token,
+      amount
+    );
   };
 
   const doRandomOnchainWithdrawal = async (depositInfo: DepositInfo) => {
@@ -47,20 +56,19 @@ contract("Exchange", (accounts: string[]) => {
       depositInfo.accountID,
       depositInfo.token,
       exchangeTestUtil.getRandomAmount(),
-      depositInfo.owner,
+      depositInfo.owner
     );
   };
 
-  const doRandomOffchainWithdrawal = (depositInfo: DepositInfo) => {
-    exchangeTestUtil.requestWithdrawalOffchain(
+  const doRandomOffchainWithdrawal = async (depositInfo: DepositInfo) => {
+    await exchangeTestUtil.requestWithdrawalOffchain(
       exchangeId,
       depositInfo.accountID,
       depositInfo.token,
       exchangeTestUtil.getRandomAmount(),
       "LRC",
       new BN(0),
-      0,
-      exchangeTestUtil.wallets[exchangeId][0],
+      exchangeTestUtil.getRandomInt(2 ** Constants.NUM_BITS_LABEL)
     );
   };
 
@@ -69,17 +77,34 @@ contract("Exchange", (accounts: string[]) => {
       exchangeId,
       depositInfo.accountID,
       exchangeTestUtil.getRandomInt(exchangeTestUtil.MAX_NUM_TOKENS),
-      exchangeTestUtil.getRandomInt(2 ** constants.TREE_DEPTH_TRADING_HISTORY),
-      exchangeTestUtil.wallets[exchangeId][0],
+      exchangeTestUtil.getRandomInt(2 ** Constants.TREE_DEPTH_TRADING_HISTORY),
       1,
       new BN(0),
-      0,
+      exchangeTestUtil.getRandomInt(2 ** Constants.NUM_BITS_LABEL)
+    );
+  };
+
+  const doRandomInternalTransfer = async (
+    depositInfoA: DepositInfo,
+    depositInfoB: DepositInfo
+  ) => {
+    await exchangeTestUtil.requestInternalTransfer(
+      exchangeId,
+      depositInfoA.accountID,
+      depositInfoB.accountID,
+      depositInfoA.token,
+      depositInfoA.amount.div(new BN(10)),
+      depositInfoA.token,
+      depositInfoA.amount.div(new BN(100)),
+      exchangeTestUtil.getRandomInt(1000)
     );
   };
 
   const createExchange = async (bDataAvailability: boolean) => {
     exchangeId = await exchangeTestUtil.createExchange(
-      exchangeTestUtil.testContext.stateOwners[0], true, bDataAvailability,
+      exchangeTestUtil.testContext.stateOwners[0],
+      true,
+      bDataAvailability
     );
   };
 
@@ -90,7 +115,7 @@ contract("Exchange", (accounts: string[]) => {
     }
   };
 
-  before( async () => {
+  before(async () => {
     exchangeTestUtil = new ExchangeTestUtil();
     await exchangeTestUtil.initialize(accounts);
   });
@@ -145,7 +170,8 @@ contract("Exchange", (accounts: string[]) => {
       const blockSizes = exchangeTestUtil.onchainWithdrawalBlockSizes;
       for (const blockSize of blockSizes) {
         for (let i = 0; i < blockSize; i++) {
-          const randomDeposit = deposits[exchangeTestUtil.getRandomInt(numDeposits)];
+          const randomDeposit =
+            deposits[exchangeTestUtil.getRandomInt(numDeposits)];
           await doRandomOnchainWithdrawal(randomDeposit);
         }
         await exchangeTestUtil.commitOnchainWithdrawalRequests(exchangeId);
@@ -169,7 +195,8 @@ contract("Exchange", (accounts: string[]) => {
         const blockSizes = exchangeTestUtil.offchainWithdrawalBlockSizes;
         for (const blockSize of blockSizes) {
           for (let i = 0; i < blockSize; i++) {
-            const randomDeposit = deposits[exchangeTestUtil.getRandomInt(numDeposits)];
+            const randomDeposit =
+              deposits[exchangeTestUtil.getRandomInt(numDeposits)];
             await doRandomOffchainWithdrawal(randomDeposit);
           }
           await exchangeTestUtil.commitOffchainWithdrawalRequests(exchangeId);
@@ -194,7 +221,8 @@ contract("Exchange", (accounts: string[]) => {
         const blockSizes = exchangeTestUtil.orderCancellationBlockSizes;
         for (const blockSize of blockSizes) {
           for (let i = 0; i < blockSize; i++) {
-            const randomDeposit = deposits[exchangeTestUtil.getRandomInt(numDeposits)];
+            const randomDeposit =
+              deposits[exchangeTestUtil.getRandomInt(numDeposits)];
             await doRandomOrderCancellation(randomDeposit);
           }
           await exchangeTestUtil.commitCancels(exchangeId);
@@ -203,5 +231,32 @@ contract("Exchange", (accounts: string[]) => {
       }
     });
 
+    it("Internal transfer", async () => {
+      const bDataAvailabilities = [true, false];
+      for (const bDataAvailability of bDataAvailabilities) {
+        await createExchange(bDataAvailability);
+
+        // Do some deposits
+        const numDeposits = 8;
+        const deposits: DepositInfo[] = [];
+        for (let i = 0; i < numDeposits; i++) {
+          deposits.push(await doRandomDeposit());
+        }
+        await exchangeTestUtil.commitDeposits(exchangeId);
+
+        const blockSizes = exchangeTestUtil.transferBlockSizes;
+        for (const blockSize of blockSizes) {
+          for (let i = 0; i < blockSize; i++) {
+            const randomDepositA =
+              deposits[exchangeTestUtil.getRandomInt(numDeposits)];
+            const randomDepositB =
+              deposits[exchangeTestUtil.getRandomInt(numDeposits)];
+            await doRandomInternalTransfer(randomDepositA, randomDepositB);
+          }
+          await exchangeTestUtil.commitInternalTransfers(exchangeId);
+        }
+        await verify();
+      }
+    });
   });
 });

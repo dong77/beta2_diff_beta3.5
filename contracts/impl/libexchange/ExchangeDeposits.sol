@@ -14,7 +14,7 @@
   See the License for the specific language governing permissions and
   limitations under the License.
 */
-pragma solidity 0.5.7;
+pragma solidity ^0.5.11;
 
 import "../../lib/AddressUtil.sol";
 import "../../lib/BurnableERC20.sol";
@@ -47,37 +47,15 @@ library ExchangeDeposits
         uint            pubKeyY
     );
 
-    function getNumDepositRequestsProcessed(
-        ExchangeData.State storage S
-      )
-        public
-        view
-        returns (uint)
-    {
-        ExchangeData.Block storage currentBlock = S.blocks[S.blocks.length - 1];
-        return currentBlock.numDepositRequestsCommitted;
-    }
-
-    function getNumAvailableDepositSlots(
-        ExchangeData.State storage S
-        )
-        public
-        view
-        returns (uint)
-    {
-        uint numOpenRequests = S.depositChain.length - getNumDepositRequestsProcessed(S);
-        return ExchangeData.MAX_OPEN_DEPOSIT_REQUESTS() - numOpenRequests;
-    }
-
     function getDepositRequest(
         ExchangeData.State storage S,
         uint index
         )
-        public
+        external
         view
         returns (
           bytes32 accumulatedHash,
-          uint256 accumulatedFee,
+          uint    accumulatedFee,
           uint32  timestamp
         )
     {
@@ -95,7 +73,7 @@ library ExchangeDeposits
         uint96  amount,  // can be zero
         uint    additionalFeeETH
         )
-        public
+        external
     {
         require(recipient != address(0), "ZERO_ADDRESS");
         require(S.areUserRequestsEnabled(), "USER_REQUEST_SUSPENDED");
@@ -107,12 +85,21 @@ library ExchangeDeposits
         uint24 accountID = S.getAccountID(recipient);
         ExchangeData.Account storage account = S.accounts[accountID];
 
+        // We allow invalid public keys to be set for accounts to
+        // disable offchain request signing.
+        // Make sure we can detect accounts that were not yet created in the circuits
+        // by forcing the pubKeyX to be non-zero.
+        require(account.pubKeyX > 0, "INVALID_PUBKEY");
+        // Make sure the public key can be stored in the SNARK field
+        require(account.pubKeyX < ExchangeData.SNARK_SCALAR_FIELD(), "INVALID_PUBKEY");
+        require(account.pubKeyY < ExchangeData.SNARK_SCALAR_FIELD(), "INVALID_PUBKEY");
+
         // Total fee to be paid by the user
         uint feeETH = additionalFeeETH.add(S.depositFeeETH);
 
         // Transfer the tokens to this contract
         transferDeposit(
-            account.owner,
+            msg.sender,
             tokenAddress,
             amount,
             feeETH
@@ -147,6 +134,8 @@ library ExchangeDeposits
         );
         S.deposits.push(_deposit);
 
+        S.tokenBalances[tokenAddress] = S.tokenBalances[tokenAddress].add(amount);
+
         emit DepositRequested(
             uint32(S.depositChain.length - 1),
             accountID,
@@ -157,8 +146,30 @@ library ExchangeDeposits
         );
     }
 
+    function getNumDepositRequestsProcessed(
+        ExchangeData.State storage S
+        )
+        public
+        view
+        returns (uint)
+    {
+        ExchangeData.Block storage currentBlock = S.blocks[S.blocks.length - 1];
+        return currentBlock.numDepositRequestsCommitted;
+    }
+
+    function getNumAvailableDepositSlots(
+        ExchangeData.State storage S
+        )
+        public
+        view
+        returns (uint)
+    {
+        uint numOpenRequests = S.depositChain.length - getNumDepositRequestsProcessed(S);
+        return ExchangeData.MAX_OPEN_DEPOSIT_REQUESTS() - numOpenRequests;
+    }
+
     function transferDeposit(
-        address accountOwner,
+        address source,
         address tokenAddress,
         uint    amount,
         uint    feeETH
@@ -172,17 +183,16 @@ library ExchangeDeposits
 
         require(msg.value >= totalRequiredETH, "INSUFFICIENT_FEE");
         uint feeSurplus = msg.value.sub(totalRequiredETH);
-        msg.sender.transferETH(feeSurplus, gasleft());
+        if (feeSurplus > 0) {
+            msg.sender.sendETHAndVerify(feeSurplus, gasleft());
+        }
 
         // Transfer the tokens from the owner into this contract
         if (amount > 0 && tokenAddress != address(0)) {
-            require(
-                tokenAddress.safeTransferFrom(
-                    accountOwner,
-                    address(this),
-                    amount
-                ),
-                "INSUFFICIENT_FUND"
+            tokenAddress.safeTransferFromAndVerify(
+                source,
+                address(this),
+                amount
             );
         }
     }
