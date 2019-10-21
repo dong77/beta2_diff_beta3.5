@@ -14,7 +14,7 @@
   See the License for the specific language governing permissions and
   limitations under the License.
 */
-pragma solidity 0.5.7;
+pragma solidity ^0.5.11;
 
 import "../../lib/AddressUtil.sol";
 import "../../lib/BurnableERC20.sol";
@@ -67,38 +67,16 @@ library ExchangeWithdrawals
         uint96          amount
     );
 
-    function getNumWithdrawalRequestsProcessed(
-        ExchangeData.State storage S
-        )
-        public
-        view
-        returns (uint)
-    {
-        ExchangeData.Block storage currentBlock = S.blocks[S.blocks.length - 1];
-        return currentBlock.numWithdrawalRequestsCommitted;
-    }
-
-    function getNumAvailableWithdrawalSlots(
-        ExchangeData.State storage S
-        )
-        public
-        view
-        returns (uint)
-    {
-        uint numOpenRequests = S.withdrawalChain.length - getNumWithdrawalRequestsProcessed(S);
-        return ExchangeData.MAX_OPEN_WITHDRAWAL_REQUESTS() - numOpenRequests;
-    }
-
     function getWithdrawRequest(
         ExchangeData.State storage S,
         uint index
         )
-        public
+        external
         view
         returns (
             bytes32 accumulatedHash,
-            uint256 accumulatedFee,
-            uint32 timestamp
+            uint    accumulatedFee,
+            uint32  timestamp
         )
     {
         require(index < S.withdrawalChain.length, "INVALID_INDEX");
@@ -114,7 +92,7 @@ library ExchangeWithdrawals
         address token,
         uint96  amount
         )
-        internal
+        external
     {
         require(amount > 0, "ZERO_VALUE");
         require(!S.isInWithdrawalMode(), "INVALID_MODE");
@@ -125,8 +103,13 @@ library ExchangeWithdrawals
 
         // Check ETH value sent, can be larger than the expected withdraw fee
         require(msg.value >= S.withdrawalFeeETH, "INSUFFICIENT_FEE");
+
         // Send surplus of ETH back to the sender
-        msg.sender.transferETH(msg.value.sub(S.withdrawalFeeETH), gasleft());
+        uint feeSurplus = msg.value.sub(S.withdrawalFeeETH);
+        if (feeSurplus > 0) {
+            msg.sender.sendETHAndVerify(feeSurplus, gasleft());
+        }
+
         // Add the withdraw to the withdraw chain
         ExchangeData.Request storage prevRequest = S.withdrawalChain[S.withdrawalChain.length - 1];
         ExchangeData.Request memory request = ExchangeData.Request(
@@ -154,17 +137,17 @@ library ExchangeWithdrawals
     // We still alow anyone to withdraw these funds for the account owner
     function withdrawFromMerkleTreeFor(
         ExchangeData.State storage S,
-        address owner,
-        address token,
-        uint    pubKeyX,
-        uint    pubKeyY,
-        uint32  nonce,
-        uint96  balance,
-        uint256 tradeHistoryRoot,
-        uint256[20] memory accountMerkleProof,
-        uint256[8]  memory balanceMerkleProof
+        address  owner,
+        address  token,
+        uint     pubKeyX,
+        uint     pubKeyY,
+        uint32   nonce,
+        uint96   balance,
+        uint     tradeHistoryRoot,
+        uint[30] calldata accountMerkleProof,
+        uint[12] calldata balanceMerkleProof
         )
-        public
+        external
     {
         require(S.isInWithdrawalMode(), "NOT_IN_WITHDRAW_MODE");
 
@@ -175,7 +158,7 @@ library ExchangeWithdrawals
         require(S.withdrawnInWithdrawMode[owner][token] == false, "WITHDRAWN_ALREADY");
 
         ExchangeBalances.verifyAccountBalance(
-            uint256(lastFinalizedBlock.merkleRoot),
+            uint(lastFinalizedBlock.merkleRoot),
             accountID,
             tokenID,
             pubKeyX,
@@ -200,11 +183,33 @@ library ExchangeWithdrawals
         );
     }
 
+    function getNumWithdrawalRequestsProcessed(
+        ExchangeData.State storage S
+        )
+        public
+        view
+        returns (uint)
+    {
+        ExchangeData.Block storage currentBlock = S.blocks[S.blocks.length - 1];
+        return currentBlock.numWithdrawalRequestsCommitted;
+    }
+
+    function getNumAvailableWithdrawalSlots(
+        ExchangeData.State storage S
+        )
+        public
+        view
+        returns (uint)
+    {
+        uint numOpenRequests = S.withdrawalChain.length - getNumWithdrawalRequestsProcessed(S);
+        return ExchangeData.MAX_OPEN_WITHDRAWAL_REQUESTS() - numOpenRequests;
+    }
+
     function withdrawFromDepositRequest(
         ExchangeData.State storage S,
         uint depositIdx
         )
-        public
+        external
     {
         require(S.isInWithdrawalMode(), "NOT_IN_WITHDRAW_MODE");
 
@@ -320,7 +325,7 @@ library ExchangeWithdrawals
         uint blockIdx,
         address payable feeRecipient
         )
-        public
+        external
         returns (uint feeAmountToOperator)
     {
         require(blockIdx > 0 && blockIdx < S.blocks.length, "INVALID_BLOCK_IDX");
@@ -374,9 +379,9 @@ library ExchangeWithdrawals
         requestedBlock.blockFeeWithdrawn = true;
 
         // Burn part of the fee by sending it to the protocol fee manager
-        S.loopring.protocolFeeVault().transferETH(feeAmountToBurn, gasleft());
+        S.loopring.protocolFeeVault().sendETHAndVerify(feeAmountToBurn, gasleft());
         // Transfer the fee to the operator
-        feeRecipient.transferETH(feeAmountToOperator, gasleft());
+        feeRecipient.sendETHAndVerify(feeAmountToOperator, gasleft());
 
         emit BlockFeeWithdrawn(blockIdx, feeAmount);
     }
@@ -386,7 +391,7 @@ library ExchangeWithdrawals
         uint blockIdx,
         uint maxNumWithdrawals
         )
-        public
+        external
     {
         require(blockIdx < S.blocks.length, "INVALID_BLOCK_IDX");
         require(maxNumWithdrawals > 0, "INVALID_MAX_NUM_WITHDRAWALS");
@@ -404,7 +409,7 @@ library ExchangeWithdrawals
         // Check if the withdrawals were already completely distributed
         require(withdrawBlock.numWithdrawalsDistributed < withdrawBlock.blockSize, "WITHDRAWALS_ALREADY_DISTRIBUTED");
 
-        // Only allow the operator to distibute withdrawals at first, if he doesn't do it in time
+        // Only allow the operator to distribute withdrawals at first, if he doesn't do it in time
         // anyone can do it and get paid a part of the exchange stake
         bool bOnlyOperator = now < withdrawBlock.timestamp + ExchangeData.MAX_TIME_TO_DISTRIBUTE_WITHDRAWALS();
         if (bOnlyOperator) {
@@ -450,7 +455,7 @@ library ExchangeWithdrawals
     }
 
 
-    // == Internal Functions ==
+    // == Internal and Private Functions ==
 
     // If allowFailure is true the transfer can fail because of a transfer error or
     // because the transfer uses more than GAS_LIMIT_SEND_TOKENS gas. The function
@@ -464,7 +469,7 @@ library ExchangeWithdrawals
         uint    amount,
         bool    allowFailure
         )
-        internal
+        private
         returns (bool success)
     {
         // If we're withdrawing from the protocol fee account send the tokens
@@ -481,6 +486,7 @@ library ExchangeWithdrawals
         address token = S.getTokenAddress(tokenID);
         // Either limit the gas by ExchangeData.GAS_LIMIT_SEND_TOKENS() or forward all gas
         uint gasLimit = allowFailure ? ExchangeData.GAS_LIMIT_SEND_TOKENS() : gasleft();
+
         // Transfer the tokens from the contract to the owner
         if (amount > 0) {
             if (token == address(0)) {
@@ -493,22 +499,28 @@ library ExchangeWithdrawals
         } else {
             success = true;
         }
+
         if (!allowFailure) {
             require(success, "TRANSFER_FAILURE");
         }
 
-        // Emit event
-        if (!success) {
+        if (success) {
+            if (amount > 0) {
+                S.tokenBalances[token] = S.tokenBalances[token].sub(amount);
+            }
+
+            if (accountID > 0 || tokenID > 0 || amount > 0) {
+                // Only emit an event when the withdrawal data hasn't been reset yet
+                // by a previous successful withdrawal
+                emit WithdrawalCompleted(
+                    accountID,
+                    tokenID,
+                    to,
+                    uint96(amount)
+                );
+            }
+        } else {
             emit WithdrawalFailed(
-                accountID,
-                tokenID,
-                to,
-                uint96(amount)
-            );
-        } else if(accountID > 0 || tokenID > 0 || amount > 0) {
-            // Only emit an event when the withdrawal data hasn't been reset yet
-            // by a previous successful withdrawal
-            emit WithdrawalCompleted(
                 accountID,
                 tokenID,
                 to,

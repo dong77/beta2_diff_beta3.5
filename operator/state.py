@@ -9,8 +9,13 @@ from float import *
 from ethsnarks.eddsa import PureEdDSA
 from ethsnarks.jubjub import Point
 from ethsnarks.field import FQ
-from ethsnarks.mimc import mimc_hash
 from ethsnarks.merkletree import MerkleTree
+from ethsnarks.poseidon import poseidon, poseidon_params
+from ethsnarks.field import SNARK_SCALAR_FIELD
+
+poseidonParamsAccount = poseidon_params(SNARK_SCALAR_FIELD, 5, 6, 52, b'poseidon', 5, security_target=128)
+poseidonParamsBalance = poseidon_params(SNARK_SCALAR_FIELD, 5, 6, 52, b'poseidon', 5, security_target=128)
+poseidonParamsTradingHistory = poseidon_params(SNARK_SCALAR_FIELD, 5, 6, 52, b'poseidon', 5, security_target=128)
 
 TREE_DEPTH_TRADING_HISTORY = 14
 TREE_DEPTH_ACCOUNTS = 20
@@ -33,7 +38,7 @@ def copyAccountInfo(account):
     return c
 
 def getDefaultAccount():
-    return Account(0, Point(0, 0))
+    return Account(Point(0, 0))
 
 class Fill(object):
     def __init__(self, amountS, amountB):
@@ -62,13 +67,13 @@ class BalanceLeaf(object):
     def __init__(self, balance = 0):
         self.balance = str(balance)
         # Trading history
-        self._tradingHistoryTree = SparseMerkleTree(TREE_DEPTH_TRADING_HISTORY)
+        self._tradingHistoryTree = SparseMerkleTree(TREE_DEPTH_TRADING_HISTORY // 2, 4)
         self._tradingHistoryTree.newTree(TradeHistoryLeaf().hash())
         self._tradeHistoryLeafs = {}
         # print("Empty trading tree: " + str(self._tradingHistoryTree._root))
 
     def hash(self):
-        return mimc_hash([int(self.balance), int(self._tradingHistoryTree._root)], 1)
+        return poseidon([int(self.balance), int(self._tradingHistoryTree._root)], poseidonParamsBalance)
 
     def fromJSON(self, jBalance):
         self.balance = jBalance["balance"]
@@ -111,7 +116,7 @@ class BalanceLeaf(object):
 
     def resetTradeHistory(self):
         # Trading history
-        self._tradingHistoryTree = SparseMerkleTree(TREE_DEPTH_TRADING_HISTORY)
+        self._tradingHistoryTree = SparseMerkleTree(TREE_DEPTH_TRADING_HISTORY // 2, 4)
         self._tradingHistoryTree.newTree(TradeHistoryLeaf().hash())
         self._tradeHistoryLeafs = {}
 
@@ -123,7 +128,7 @@ class TradeHistoryLeaf(object):
         self.orderID = orderID
 
     def hash(self):
-        return mimc_hash([int(self.filled), int(self.cancelled), int(self.orderID)], 1)
+        return poseidon([int(self.filled), int(self.cancelled), int(self.orderID)], poseidonParamsTradingHistory)
 
     def fromJSON(self, jAccount):
         self.filled = jAccount["filled"]
@@ -132,22 +137,20 @@ class TradeHistoryLeaf(object):
 
 
 class Account(object):
-    def __init__(self, secretKey, publicKey):
-        self.secretKey = str(secretKey)
+    def __init__(self, publicKey):
         self.publicKeyX = str(publicKey.x)
         self.publicKeyY = str(publicKey.y)
         self.nonce = 0
         # Balances
-        self._balancesTree = SparseMerkleTree(TREE_DEPTH_TOKENS)
+        self._balancesTree = SparseMerkleTree(TREE_DEPTH_TOKENS // 2, 4)
         self._balancesTree.newTree(BalanceLeaf().hash())
         self._balancesLeafs = {}
         #print("Empty balances tree: " + str(self._balancesTree._root))
 
     def hash(self):
-        return mimc_hash([int(self.publicKeyX), int(self.publicKeyY), int(self.nonce), int(self._balancesTree._root)], 1)
+        return poseidon([int(self.publicKeyX), int(self.publicKeyY), int(self.nonce), int(self._balancesTree._root)], poseidonParamsAccount)
 
     def fromJSON(self, jAccount):
-        self.secretKey = jAccount["secretKey"]
         self.publicKeyX = jAccount["publicKeyX"]
         self.publicKeyY = jAccount["publicKeyY"]
         self.nonce = int(jAccount["nonce"])
@@ -226,7 +229,10 @@ class Account(object):
         rootBefore = self._balancesTree._root
 
         # Update cancelled state
-        filled = int(self._balancesLeafs[str(tokenID)].getTradeHistory(orderID).filled)
+        tradeHistory = self._balancesLeafs[str(tokenID)].getTradeHistory(orderID)
+        filled = int(tradeHistory.filled)
+        if int(tradeHistory.orderID) < orderID:
+            filled = 0
         tradeHistoryUpdate = self._balancesLeafs[str(tokenID)].updateTradeHistory(orderID, filled, 1, orderID)
 
         balancesAfter = copyBalanceInfo(self._balancesLeafs[str(tokenID)])
@@ -239,6 +245,9 @@ class Account(object):
                                  balancesBefore, balancesAfter),
                 tradeHistoryUpdate)
 
+def write_proof(proof):
+    # return [[str(_) for _ in proof_level] for proof_level in proof]
+    return [str(_) for _ in proof]
 
 class TradeHistoryUpdateData(object):
     def __init__(self,
@@ -246,7 +255,7 @@ class TradeHistoryUpdateData(object):
                  rootBefore, rootAfter,
                  before, after):
         self.orderID = int(orderID)
-        self.proof = [str(_) for _ in proof]
+        self.proof = write_proof(proof)
         self.rootBefore = str(rootBefore)
         self.rootAfter = str(rootAfter)
         self.before = before
@@ -258,7 +267,7 @@ class BalanceUpdateData(object):
                  rootBefore, rootAfter,
                  before, after):
         self.tokenID = int(tokenID)
-        self.proof = [str(_) for _ in proof]
+        self.proof = write_proof(proof)
         self.rootBefore = str(rootBefore)
         self.rootAfter = str(rootAfter)
         self.before = before
@@ -270,7 +279,7 @@ class AccountUpdateData(object):
                  rootBefore, rootAfter,
                  before, after):
         self.accountID = int(accountID)
-        self.proof = [str(_) for _ in proof]
+        self.proof = write_proof(proof)
         self.rootBefore = str(rootBefore)
         self.rootAfter = str(rootAfter)
         self.before = before
@@ -300,18 +309,15 @@ class WithdrawProof(object):
 
 class Order(object):
     def __init__(self,
-                 publicKey,
-                 dualAuthPublicKey, dualAuthSecretKey,
+                 publicKeyX, publicKeyY,
                  exchangeID, orderID, accountID,
                  tokenS, tokenB,
                  amountS, amountB,
                  allOrNone, validSince, validUntil, buy,
-                 maxFeeBips, feeBips, rebateBips):
-        self.publicKeyX = str(publicKey.x)
-        self.publicKeyY = str(publicKey.y)
-        self.dualAuthPublicKeyX = str(dualAuthPublicKey.x)
-        self.dualAuthPublicKeyY = str(dualAuthPublicKey.y)
-        self.dualAuthSecretKey = str(dualAuthSecretKey)
+                 maxFeeBips, feeBips, rebateBips,
+                 label):
+        self.publicKeyX = str(publicKeyX)
+        self.publicKeyY = str(publicKeyY)
 
         self.exchangeID = int(exchangeID)
         self.orderID = int(orderID)
@@ -328,6 +334,7 @@ class Order(object):
         self.validUntil = validUntil
         self.buy = bool(buy)
         self.maxFeeBips = maxFeeBips
+        self.label = str(label)
 
         self.feeBips = feeBips
         self.rebateBips = rebateBips
@@ -338,7 +345,8 @@ class Order(object):
         valid = valid and (self.validSince <= context.timestamp)
         valid = valid and (context.timestamp <= self.validUntil)
 
-        valid = valid and not self.hasRoundingError(fillAmountS, int(order.amountB), int(order.amountS))
+        valid = valid and self.checkFillRate(int(order.amountS), int(order.amountB), fillAmountS, fillAmountB)
+
         valid = valid and not (not self.buy and self.allOrNone and fillAmountS < int(order.amountS))
         valid = valid and not (self.buy and self.allOrNone and fillAmountB < int(order.amountB))
         valid = valid and fillAmountS != 0
@@ -346,21 +354,15 @@ class Order(object):
 
         self.valid = valid
 
-    def hasRoundingError(self, value, numerator, denominator):
-        multiplied = value * numerator
-        remainder = multiplied % denominator
-        # Return true if the rounding error is larger than 1%
-        return multiplied < remainder * 100
-
+    def checkFillRate(self, amountS, amountB, fillAmountS, fillAmountB):
+        # Return true if the fill rate < 1% worse than the target rate
+        # (fillAmountS/fillAmountB) * 100 <= (amountS/amountB) * 101
+        return (fillAmountS * amountB * 100) < (fillAmountB * amountS * 101)
 
 class Ring(object):
-    def __init__(self, orderA, orderB, ringMatcherAccountID, tokenID, fee, nonce):
+    def __init__(self, orderA, orderB):
         self.orderA = orderA
         self.orderB = orderB
-        self.ringMatcherAccountID = int(ringMatcherAccountID)
-        self.tokenID = int(tokenID)
-        self.fee = str(fee)
-        self.nonce = int(nonce)
 
 class RingSettlement(object):
     def __init__(self,
@@ -369,10 +371,8 @@ class RingSettlement(object):
                  tradeHistoryUpdate_A, tradeHistoryUpdate_B,
                  balanceUpdateS_A, balanceUpdateB_A, accountUpdate_A,
                  balanceUpdateS_B, balanceUpdateB_B, accountUpdate_B,
-                 balanceUpdateA_M, balanceUpdateB_M, balanceUpdateO_M, accountUpdate_M,
                  balanceUpdateA_P, balanceUpdateB_P,
-                 balanceUpdateF_O,
-                 feeToOperator):
+                 balanceDeltaA_O, balanceDeltaB_O):
         self.ring = ring
 
         self.accountsMerkleRoot = str(accountsMerkleRoot)
@@ -388,17 +388,11 @@ class RingSettlement(object):
         self.balanceUpdateB_B = balanceUpdateB_B
         self.accountUpdate_B = accountUpdate_B
 
-        self.balanceUpdateA_M = balanceUpdateA_M
-        self.balanceUpdateB_M = balanceUpdateB_M
-        self.balanceUpdateO_M = balanceUpdateO_M
-        self.accountUpdate_M = accountUpdate_M
-
         self.balanceUpdateA_P = balanceUpdateA_P
         self.balanceUpdateB_P = balanceUpdateB_P
 
-        self.balanceUpdateF_O = balanceUpdateF_O
-
-        self.feeToOperator = feeToOperator
+        self.balanceDeltaA_O = balanceDeltaA_O
+        self.balanceDeltaB_O = balanceDeltaB_O
 
 
 class OnchainWithdrawal(object):
@@ -416,11 +410,11 @@ class OffchainWithdrawal(object):
     def __init__(self,
                  exchangeID,
                  accountID, tokenID, amountRequested, fAmountWithdrawn,
-                 walletAccountID, feeTokenID, fee, walletSplitPercentage,
+                 feeTokenID, fee, label,
+                 feeValue,
                  balanceUpdateF_A, balanceUpdateW_A, accountUpdate_A,
-                 balanceUpdateF_W, accountUpdate_W,
                  balanceUpdateF_O,
-                 feeToOperator, nonce):
+                 nonce):
         self.exchangeID = exchangeID
 
         self.accountID = accountID
@@ -428,62 +422,88 @@ class OffchainWithdrawal(object):
         self.amountRequested = str(amountRequested)
         self.fAmountWithdrawn = int(fAmountWithdrawn)
 
-        self.walletAccountID = walletAccountID
         self.feeTokenID = feeTokenID
         self.fee = str(fee)
-        self.walletSplitPercentage = walletSplitPercentage
+        self.label = str(label)
+
+        self.feeValue = feeValue
 
         self.balanceUpdateF_A = balanceUpdateF_A
         self.balanceUpdateW_A = balanceUpdateW_A
         self.accountUpdate_A = accountUpdate_A
 
-        self.balanceUpdateF_W = balanceUpdateF_W
-        self.accountUpdate_W = accountUpdate_W
-
         self.balanceUpdateF_O = balanceUpdateF_O
 
-        self.feeToOperator = feeToOperator
         self.nonce = nonce
 
 class Cancellation(object):
     def __init__(self,
                  exchangeID,
-                 accountID, orderTokenID, orderID, walletAccountID,
-                 feeTokenID, fee, walletSplitPercentage,
+                 accountID, orderTokenID, orderID,
+                 feeTokenID, fee, label,
                  nonce,
+                 feeValue,
                  tradeHistoryUpdate_A, balanceUpdateT_A, balanceUpdateF_A, accountUpdate_A,
-                 balanceUpdateF_W, accountUpdate_W,
-                 balanceUpdateF_O,
-                 feeToOperator):
+                 balanceUpdateF_O):
         self.exchangeID = exchangeID
 
         self.accountID = accountID
         self.orderTokenID = orderTokenID
         self.orderID = orderID
-        self.walletAccountID = walletAccountID
         self.feeTokenID = feeTokenID
         self.fee = str(fee)
-        self.walletSplitPercentage = walletSplitPercentage
+        self.label = str(label)
         self.nonce = nonce
+
+        self.feeValue = feeValue
 
         self.tradeHistoryUpdate_A = tradeHistoryUpdate_A
         self.balanceUpdateT_A = balanceUpdateT_A
         self.balanceUpdateF_A = balanceUpdateF_A
         self.accountUpdate_A = accountUpdate_A
 
-        self.balanceUpdateF_W = balanceUpdateF_W
-        self.accountUpdate_W = accountUpdate_W
-
         self.balanceUpdateF_O = balanceUpdateF_O
 
-        self.feeToOperator = feeToOperator
+class InternalTransfer(object):
+    def __init__(self,
+                 exchangeID,
+                 accountFromID, accountToID,
+                 transTokenID, amountRequested, fAmountTrans,
+                 feeTokenID, fee, label,
+                 nonceFrom, nonceTo,
+                 feeValue,
+                 balanceUpdateF_From, balanceUpdateT_From, accountUpdate_From,
+                 balanceUpdateT_To, accountUpdate_To,
+                 balanceUpdateF_O):
+        self.exchangeID = exchangeID
 
+        self.accountFromID = accountFromID
+        self.accountToID = accountToID
+        self.transTokenID = transTokenID
+        self.amountRequested = str(amountRequested)
+        self.fAmountTrans = str(fAmountTrans)
+        self.feeTokenID = feeTokenID
+        self.fee = str(fee)
+        self.label = int(label)
+        self.nonceFrom = nonceFrom
+        self.nonceTo = nonceTo
+
+        self.feeValue = feeValue
+
+        self.balanceUpdateF_From = balanceUpdateF_From
+        self.balanceUpdateT_From = balanceUpdateT_From
+        self.accountUpdate_From = accountUpdate_From
+
+        self.balanceUpdateT_To = balanceUpdateT_To
+        self.accountUpdate_To = accountUpdate_To
+
+        self.balanceUpdateF_O = balanceUpdateF_O
 
 class State(object):
     def __init__(self, exchangeID):
         self.exchangeID = int(exchangeID)
         # Accounts
-        self._accountsTree = SparseMerkleTree(TREE_DEPTH_ACCOUNTS)
+        self._accountsTree = SparseMerkleTree(TREE_DEPTH_ACCOUNTS // 2, 4)
         self._accountsTree.newTree(getDefaultAccount().hash())
         self._accounts = {}
         self._accounts[str(0)] = getDefaultAccount()
@@ -608,8 +628,6 @@ class State(object):
         fillA.B = fillB.S
         fillB.B = fillA.S
 
-        feeToOperator = roundToFloatValue(ring.fee, Float12Encoding)
-
         '''
         print("fillA.S: " + str(fillA.S))
         print("fillA.B: " + str(fillA.B))
@@ -683,44 +701,26 @@ class State(object):
         accountUpdate_B = AccountUpdateData(ring.orderB.accountID, proof, rootBefore, rootAfter, accountBefore, accountAfter)
         ###
 
-        # Update ringmatcher
-        accountM = self.getAccount(ring.ringMatcherAccountID)
-
-        rootBefore = self._accountsTree._root
-        accountBefore = copyAccountInfo(self.getAccount(ring.ringMatcherAccountID))
-        proof = self._accountsTree.createProof(ring.ringMatcherAccountID)
-
-        balanceUpdateA_M = accountM.updateBalance(ring.orderA.tokenB, fee_A - protocolFee_A - rebate_A)
-        balanceUpdateB_M = accountM.updateBalance(ring.orderB.tokenB, fee_B - protocolFee_B - rebate_B)
-        balanceUpdateO_M = accountM.updateBalance(ring.tokenID, -feeToOperator)
-        accountM.nonce += 1
-
-        self.updateAccountTree(ring.ringMatcherAccountID)
-        accountAfter = copyAccountInfo(self.getAccount(ring.ringMatcherAccountID))
-        rootAfter = self._accountsTree._root
-        accountUpdate_M = AccountUpdateData(ring.ringMatcherAccountID, proof, rootBefore, rootAfter, accountBefore, accountAfter)
-        ###
-
         # Protocol fee payment
         balanceUpdateA_P = self.getAccount(0).updateBalance(ring.orderA.tokenB, protocolFee_A)
         balanceUpdateB_P = self.getAccount(0).updateBalance(ring.orderB.tokenB, protocolFee_B)
         ###
 
         # Operator payment
-        # This is done after all rings are settled
+        balanceDeltaA_O = fee_A - protocolFee_A - rebate_A
+        balanceDeltaB_O = fee_B - protocolFee_B - rebate_B
+        # The Merkle tree update is done after all rings are settled
 
         return RingSettlement(ring,
                               accountsMerkleRoot,
                               tradeHistoryUpdate_A, tradeHistoryUpdate_B,
                               balanceUpdateS_A, balanceUpdateB_A, accountUpdate_A,
                               balanceUpdateS_B, balanceUpdateB_B, accountUpdate_B,
-                              balanceUpdateA_M, balanceUpdateB_M, balanceUpdateO_M, accountUpdate_M,
                               balanceUpdateA_P, balanceUpdateB_P,
-                              None,
-                              feeToOperator)
+                              balanceDeltaA_O, balanceDeltaB_O)
 
 
-    def deposit(self, accountID, secretKey, publicKeyX, publicKeyY, token, amount):
+    def deposit(self, accountID, publicKeyX, publicKeyY, token, amount):
         # Copy the initial merkle root
         rootBefore = self._accountsTree._root
 
@@ -733,13 +733,12 @@ class State(object):
 
         # Create the account if necessary
         if not(str(accountID) in self._accounts):
-            self._accounts[str(accountID)] = Account(secretKey, Point(publicKeyX, publicKeyY))
+            self._accounts[str(accountID)] = Account(Point(publicKeyX, publicKeyY))
 
         account = self.getAccount(accountID)
         balanceUpdate = account.updateBalance(token, amount)
 
         # Update keys
-        account.secretKey = str(secretKey)
         account.publicKeyX = str(publicKeyX)
         account.publicKeyY = str(publicKeyY)
 
@@ -812,11 +811,8 @@ class State(object):
 
     def offchainWithdraw(self,
                          exchangeID, accountID, tokenID, amountRequested,
-                         operatorAccountID, walletAccountID, feeTokenID, fee, walletSplitPercentage):
+                         operatorAccountID, feeTokenID, fee, label):
         feeValue = roundToFloatValue(fee, Float16Encoding)
-
-        feeToWallet = feeValue * walletSplitPercentage // 100
-        feeToOperator = feeValue - feeToWallet
 
         # Update account
         rootBefore = self._accountsTree._root
@@ -841,39 +837,23 @@ class State(object):
         accountUpdate_A = AccountUpdateData(accountID, proof, rootBefore, rootAfter, accountBefore, accountAfter)
         ###
 
-        # Update wallet
-        rootBefore = self._accountsTree._root
-        accountBefore = copyAccountInfo(self.getAccount(walletAccountID))
-        proof = self._accountsTree.createProof(walletAccountID)
-
-        balanceUpdateF_W = self.getAccount(walletAccountID).updateBalance(feeTokenID, feeToWallet)
-
-        self.updateAccountTree(walletAccountID)
-        accountAfter = copyAccountInfo(self.getAccount(walletAccountID))
-        rootAfter = self._accountsTree._root
-        accountUpdate_W = AccountUpdateData(walletAccountID, proof, rootBefore, rootAfter, accountBefore, accountAfter)
-        ###
-
         # Operator payment
         # This is done after all withdrawals are processed
 
         withdrawal = OffchainWithdrawal(exchangeID,
                                         accountID, tokenID, amountRequested, fAmountWithdrawn,
-                                        walletAccountID, feeTokenID, fee, walletSplitPercentage,
+                                        feeTokenID, fee, label,
+                                        feeValue,
                                         balanceUpdateF_A, balanceUpdateW_A, accountUpdate_A,
-                                        balanceUpdateF_W, accountUpdate_W,
                                         None,
-                                        feeToOperator, nonce)
+                                        nonce)
         return withdrawal
 
     def cancelOrder(self,
-                    exchangeID, accountID, orderTokenID, orderID, walletAccountID,
-                    operatorAccountID, feeTokenID, fee, walletSplitPercentage):
+                    exchangeID, accountID, orderTokenID, orderID,
+                    operatorAccountID, feeTokenID, fee, label):
 
         feeValue = roundToFloatValue(fee, Float16Encoding)
-
-        feeToWallet = feeValue * walletSplitPercentage // 100
-        feeToOperator = feeValue - feeToWallet
 
         # Update account
         rootBefore = self._accountsTree._root
@@ -891,42 +871,70 @@ class State(object):
         accountUpdate_A = AccountUpdateData(accountID, proof, rootBefore, rootAfter, accountBefore, accountAfter)
         ###
 
-        # Update wallet
-        rootBefore = self._accountsTree._root
-        accountBefore = copyAccountInfo(self.getAccount(walletAccountID))
-        proof = self._accountsTree.createProof(walletAccountID)
-
-        balanceUpdateF_W = self.getAccount(walletAccountID).updateBalance(feeTokenID, feeToWallet)
-
-        self.updateAccountTree(walletAccountID)
-        accountAfter = copyAccountInfo(self.getAccount(walletAccountID))
-        rootAfter = self._accountsTree._root
-        accountUpdate_W = AccountUpdateData(walletAccountID, proof, rootBefore, rootAfter, accountBefore, accountAfter)
-        ###
-
         # Operator payment
         # This is done after all cancellations are processed
 
         cancellation = Cancellation(exchangeID,
-                                    accountID, orderTokenID, orderID, walletAccountID,
-                                    feeTokenID, fee, walletSplitPercentage,
+                                    accountID, orderTokenID, orderID,
+                                    feeTokenID, fee, label,
                                     nonce,
+                                    feeValue,
                                     tradeHistoryUpdate_A, balanceUpdateT_A, balanceUpdateF_A, accountUpdate_A,
-                                    balanceUpdateF_W, accountUpdate_W,
-                                    None,
-                                    feeToOperator)
+                                    None)
         return cancellation
 
-    def createWithdrawProof(self, exchangeID, accountID, tokenID):
-        account = copyAccountInfo(self.getAccount(accountID))
-        balance = copyBalanceInfo(self.getAccount(accountID)._balancesLeafs[str(tokenID)])
-        accountProof = self._accountsTree.createProof(accountID)
-        balanceProof = self.getAccount(accountID)._balancesTree.createProof(tokenID)
+    def internalTransfer(self,
+                    exchangeID, operatorAccountID, accountFromID, accountToID,
+                    transTokenID, amountRequested, feeTokenID, fee, label):
 
-        return WithdrawProof(exchangeID, accountID, tokenID,
-                             account, balance,
-                             self.getRoot(),
-                             accountProof, balanceProof)
+        feeValue = roundToFloatValue(fee, Float16Encoding)
+
+        # Update account From
+        rootBefore = self._accountsTree._root
+        accountBefore = copyAccountInfo(self.getAccount(accountFromID))
+        nonce = accountBefore.nonce
+        proof = self._accountsTree.createProof(accountFromID)
+
+        balanceUpdateF_From = self.getAccount(accountFromID).updateBalance(feeTokenID, -feeValue)
+
+        fAmountTrans = toFloat(amountRequested, Float24Encoding)
+        amountTrans = fromFloat(fAmountTrans, Float24Encoding)
+        balanceUpdateT_From = self.getAccount(accountFromID).updateBalance(transTokenID, -amountTrans)
+
+        self.getAccount(accountFromID).nonce += 1
+
+        self.updateAccountTree(accountFromID)
+        accountAfter = copyAccountInfo(self.getAccount(accountFromID))
+        rootAfter = self._accountsTree._root
+        accountUpdate_From = AccountUpdateData(accountFromID, proof, rootBefore, rootAfter, accountBefore, accountAfter)
+
+        # Update account To
+        rootToBefore = self._accountsTree._root
+        accountToBefore = copyAccountInfo(self.getAccount(accountToID))
+        nonceTo = accountToBefore.nonce
+        proofTo = self._accountsTree.createProof(accountToID)
+
+        accountTo = self.getAccount(accountToID)
+        balanceUpdateT_To = accountTo.updateBalance(transTokenID, amountTrans)
+
+        self.updateAccountTree(accountToID)
+        accountToAfter = copyAccountInfo(self.getAccount(accountToID))
+        rootToAfter = self._accountsTree._root
+        accountUpdate_To = AccountUpdateData(accountToID, proofTo, rootToBefore, rootToAfter, accountToBefore, accountToAfter)
+
+        # Operator payment
+        # This is done after all internal transfer are processed
+
+        internalTrans = InternalTransfer(exchangeID,
+                                         accountFromID, accountToID,
+                                         transTokenID, amountRequested, fAmountTrans,
+                                         feeTokenID, fee, label,
+                                         nonce, nonceTo,
+                                         feeValue,
+                                         balanceUpdateF_From, balanceUpdateT_From, accountUpdate_From,
+                                         balanceUpdateT_To, accountUpdate_To,
+                                         None)
+        return internalTrans
 
     def updateAccountTree(self, accountID):
         self._accountsTree.update(accountID, self.getAccount(accountID).hash())

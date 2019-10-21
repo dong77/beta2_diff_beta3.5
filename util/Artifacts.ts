@@ -1,9 +1,11 @@
-
 export class Artifacts {
+  public MockContract: any;
+  public ExchangeConstants: any;
+  public UniversalRegistry: any;
   public LoopringV3: any;
-  public Exchange: any;
-  public ExchangeDeployer: any;
+  public ExchangeV3: any;
   public BlockVerifier: any;
+  public FixPriceDowntimeCostCalculator: any;
   public DummyToken: any;
   public LRCToken: any;
   public GTOToken: any;
@@ -17,11 +19,22 @@ export class Artifacts {
   public AccountContract: any;
   public LzDecompressor: any;
   public TransferContract: any;
+  public PoseidonContract: any;
+  public UserStakingPool: any;
+  public ProtocolFeeVault: any;
+  public UniswapTokenSeller: any;
+  public AddressWhitelist: any;
+
   constructor(artifacts: any) {
+    this.MockContract = artifacts.require("thirdparty/MockContract.sol");
+    this.ExchangeConstants = artifacts.require("impl/lib/ExchangeConstants");
+    this.UniversalRegistry = artifacts.require("impl/UniversalRegistry");
     this.LoopringV3 = artifacts.require("impl/LoopringV3");
-    this.Exchange = artifacts.require("impl/Exchange");
-    this.ExchangeDeployer = artifacts.require("impl/ExchangeDeployer");
+    this.ExchangeV3 = artifacts.require("impl/ExchangeV3");
     this.BlockVerifier = artifacts.require("impl/BlockVerifier");
+    this.FixPriceDowntimeCostCalculator = artifacts.require(
+      "test/FixPriceDowntimeCostCalculator"
+    );
     this.DummyToken = artifacts.require("test/DummyToken");
     this.LRCToken = artifacts.require("test/tokens/LRC");
     this.GTOToken = artifacts.require("test/tokens/GTO");
@@ -35,5 +48,12 @@ export class Artifacts {
     this.AccountContract = artifacts.require("test/AccountContract");
     this.LzDecompressor = artifacts.require("test/LzDecompressor");
     this.TransferContract = artifacts.require("test/TransferContract");
+    this.PoseidonContract = artifacts.require("test/PoseidonContract");
+    this.UserStakingPool = artifacts.require("impl/UserStakingPool");
+    this.AddressWhitelist = artifacts.require(
+      "./impl/SignatureBasedAddressWhitelist.sol"
+    );
+    this.ProtocolFeeVault = artifacts.require("impl/ProtocolFeeVault");
+    this.UniswapTokenSeller = artifacts.require("impl/UniswapTokenSeller");
   }
 }
